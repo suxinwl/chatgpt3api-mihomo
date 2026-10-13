@@ -4,7 +4,7 @@ Status: current
 
 独立部署的 Mihomo 代理服务，带中文订阅管理后台。与 `chatgpt3api` 分成两套 Docker Compose；后台通过宝塔反代独立域名访问。
 
-镜像：`ghcr.io/suxinwl/chatgpt3api-mihomo:latest`。固定版本使用 `:v1.0.2`，支持 Linux amd64 / arm64，内核固定为 Mihomo v1.19.32。
+镜像：`ghcr.io/suxinwl/chatgpt3api-mihomo:latest`。固定版本使用 `:v1.0.3`，支持 Linux amd64 / arm64，内核固定为 Mihomo v1.19.32。
 
 支持：
 

@@ -572,8 +572,9 @@ class Runtime:
                             if process.poll() is not None:
                                 break
                             try:
-                                ready = client.get("/version", timeout=0.4)
-                                if ready.status_code == 200 and ready.json().get("version"):
+                                # The controller can start before the profile is installed.
+                                ready = client.get("/proxies", timeout=0.4)
+                                if ready.status_code == 200 and name in ready.json().get("proxies", {}):
                                     break
                             except (httpx.HTTPError, ValueError):
                                 pass
