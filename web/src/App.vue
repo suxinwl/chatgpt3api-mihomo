@@ -287,7 +287,7 @@ onUnmounted(() => clearInterval(timer));
           <p class="muted">
             {{
               overview?.profiles.find((p) => p.active)?.name ||
-              "添加 Clash / Mihomo 订阅，或导入节点配置。"
+              "添加订阅链接，或导入节点配置。"
             }}
           </p>
         </div>
@@ -310,7 +310,7 @@ onUnmounted(() => clearInterval(timer));
           </button>
         </div>
         <div v-if="!overview?.profiles.length" class="empty">
-          还没有订阅。添加链接或导入 YAML 配置后即可选择节点。
+          还没有订阅。添加链接或导入节点配置后即可选择节点。
         </div>
         <div
           v-for="profile in overview?.profiles"
@@ -464,7 +464,7 @@ onUnmounted(() => clearInterval(timer));
               :class="{ active: importMode }"
               @click="importMode = true"
             >
-              导入 YAML
+              导入配置
             </button>
           </div>
           <template v-if="!importMode"
@@ -472,7 +472,7 @@ onUnmounted(() => clearInterval(timer));
               >{{
                 editing
                   ? "新订阅链接（留空保留原链接）"
-                  : "Clash / Mihomo 订阅链接"
+                  : "订阅链接（Clash / Mihomo 或 VLESS Base64）"
               }}<input
                 v-model="form.url"
                 type="url"
@@ -490,10 +490,10 @@ onUnmounted(() => clearInterval(timer));
             ><label
               >选择配置文件<input
                 type="file"
-                accept=".yaml,.yml,.json"
+                accept=".yaml,.yml,.json,.txt"
                 @change="readFile" /></label
             ><label
-              >或粘贴 YAML 配置<textarea
+              >或粘贴配置 / VLESS 链接 / Base64 订阅<textarea
                 v-model="form.content"
                 rows="8"
                 required
@@ -502,8 +502,8 @@ onUnmounted(() => clearInterval(timer));
               ></textarea>
             </label>
             <p class="muted">
-              仅导入 proxies 节点；支持 VLESS、Reality、TUIC、Hysteria2
-              等内核支持的协议。监听端口与管理设置由本服务管理。
+              支持 Clash/Mihomo 配置、VLESS 链接和 Base64 订阅。
+              VLESS 链接支持 TCP、WS、gRPC 与 TLS/Reality；配置中的其他协议由内核校验。
             </p></template
           >
           <p v-else class="muted">

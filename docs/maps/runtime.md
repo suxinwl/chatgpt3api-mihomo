@@ -16,3 +16,5 @@ Status: current
 `create_app` owns startup/shutdown through the ASGI lifespan. Runtime starts the validated core and a single supervisor, restarts a failed process and schedules subscription refresh. The image uses one Uvicorn worker to keep one lifecycle owner.
 
 Mutation requests require `X-Manager-Request: 1`; browser origins must match `PUBLIC_ORIGIN`. Subscription fetching validates every redirect and connects to the validated public IP while preserving HTTP Host and TLS SNI. Input and download sizes are bounded. Controller calls ignore inherited proxy environment variables.
+
+The import path is `Runtime.add/edit/refresh` → `parse_nodes` → normalized private YAML cache → native-core validation → profile commit. `parse_nodes` accepts inline YAML/JSON nodes and raw or Base64 VLESS links; `_vless_nodes` maps supported URI fields and assigns unique names. A malformed or unsupported link fails the entire profile. Existing caches retain the same schema and restart behavior.

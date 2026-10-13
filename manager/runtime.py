@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
 import json
@@ -12,7 +13,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
 import httpx
 import yaml
@@ -43,22 +44,103 @@ def atomic_write(path: Path, data: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _vless_nodes(text: str) -> list[dict]:
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not 1 <= len(lines) <= 512:
+        raise ValueError
+    nodes, names = [], set()
+    for index, line in enumerate(lines, 1):
+        if len(line) > 16384 or any(ord(c) < 32 for c in line) or re.search(r"%(?![0-9a-fA-F]{2})", line):
+            raise ValueError
+        parsed = urlsplit(line)
+        if (parsed.scheme != "vless" or not parsed.hostname or not parsed.username
+                or parsed.password is not None or parsed.path not in {"", "/"}
+                or parsed.port is None or not 1 <= parsed.port <= 65535
+                or any(ord(c) < 33 for c in parsed.netloc)):
+            raise ValueError
+        pairs = parse_qsl(parsed.query, keep_blank_values=True, max_num_fields=64, errors="strict")
+        options = dict(pairs)
+        if len(options) != len(pairs) or any(ord(c) < 32 for pair in pairs for value in pair for c in value):
+            raise ValueError
+        if options.get("encryption", "none") != "none":
+            raise ValueError
+        network = options.get("type") or "tcp"
+        security = options.get("security") or "none"
+        if network not in {"tcp", "ws", "grpc"} or security not in {"none", "tls", "reality"}:
+            raise ValueError
+        flow = options.get("flow", "")
+        if flow and (flow != "xtls-rprx-vision" or network != "tcp" or security == "none"):
+            raise ValueError
+        if network == "tcp" and options.get("headerType", "none") not in {"", "none"}:
+            raise ValueError
+        if network == "grpc" and (options.get("mode", "gun") not in {"", "gun"} or options.get("authority")):
+            raise ValueError
+        name = unquote(parsed.fragment, errors="strict").strip() or f"VLESS {index}"
+        if any(ord(c) < 32 for c in name):
+            raise ValueError
+        name = name[:160]
+        base, suffix = name, 1
+        while name in names or name in RESERVED:
+            suffix += 1
+            ending = f" ({suffix})"
+            name = base[:160 - len(ending)] + ending
+        names.add(name)
+        node = {"name": name, "type": "vless", "server": parsed.hostname, "port": parsed.port,
+                "uuid": str(uuid.UUID(unquote(parsed.username, errors="strict"))), "udp": True}
+        if flow:
+            node["flow"] = flow
+        if security != "none":
+            node["tls"] = True
+            if options.get("sni"):
+                node["servername"] = options["sni"]
+            if options.get("fp"):
+                node["client-fingerprint"] = options["fp"]
+            if options.get("alpn"):
+                node["alpn"] = options["alpn"].split(",")
+            insecure = options.get("insecure", options.get("allowInsecure", "0")).lower()
+            if insecure not in {"", "0", "1", "false", "true"}:
+                raise ValueError
+            node["skip-cert-verify"] = insecure in {"1", "true"}
+            if security == "reality":
+                if not options.get("pbk"):
+                    raise ValueError
+                node["reality-opts"] = {"public-key": options["pbk"], "short-id": options.get("sid", "")}
+        if network == "ws":
+            node["network"] = "ws"
+            node["ws-opts"] = {"path": options.get("path") or "/"}
+            if options.get("host"):
+                node["ws-opts"]["headers"] = {"Host": options["host"]}
+        elif network == "grpc":
+            node["network"] = "grpc"
+            node["grpc-opts"] = {"grpc-service-name": options.get("serviceName", "")}
+        nodes.append(node)
+    return nodes
+
+
 def parse_nodes(payload: bytes) -> list[dict]:
     if not payload or len(payload) > MAX_BYTES:
         raise SubscriptionError("配置不能为空且不能超过 8 MB")
     try:
-        depth = 0
-        for count, event in enumerate(yaml.parse(payload)):
-            if count > 50000 or isinstance(event, yaml.events.AliasEvent):
-                raise ValueError
-            if isinstance(event, (yaml.events.MappingStartEvent, yaml.events.SequenceStartEvent)):
-                depth += 1
-            elif isinstance(event, (yaml.events.MappingEndEvent, yaml.events.SequenceEndEvent)):
-                depth -= 1
-            if depth > 24:
-                raise ValueError
-        document = yaml.safe_load(payload)
-        nodes = document.get("proxies") if isinstance(document, dict) else None
+        text = payload.decode("utf-8-sig").strip()
+        if re.fullmatch(r"[A-Za-z0-9+/=_\s-]+", text):
+            encoded = "".join(text.split()).encode("ascii")
+            text = base64.b64decode(encoded + b"=" * (-len(encoded) % 4), altchars=b"-_", validate=True).decode("utf-8-sig").strip()
+            nodes = _vless_nodes(text)
+        elif text.startswith("vless://"):
+            nodes = _vless_nodes(text)
+        else:
+            depth = 0
+            for count, event in enumerate(yaml.parse(payload)):
+                if count > 50000 or isinstance(event, yaml.events.AliasEvent):
+                    raise ValueError
+                if isinstance(event, (yaml.events.MappingStartEvent, yaml.events.SequenceStartEvent)):
+                    depth += 1
+                elif isinstance(event, (yaml.events.MappingEndEvent, yaml.events.SequenceEndEvent)):
+                    depth -= 1
+                if depth > 24:
+                    raise ValueError
+            document = yaml.safe_load(payload)
+            nodes = document.get("proxies") if isinstance(document, dict) else None
         if not isinstance(nodes, list) or not 1 <= len(nodes) <= 512:
             raise ValueError
         names = set()
@@ -72,7 +154,7 @@ def parse_nodes(payload: bytes) -> list[dict]:
             names.add(name)
         return nodes
     except Exception:
-        raise SubscriptionError("需要 Clash/Mihomo YAML 配置，包含 1–512 个名称唯一的 proxies 节点；不支持原始链接或 YAML 别名") from None
+        raise SubscriptionError("支持 Clash/Mihomo YAML/JSON、VLESS 链接及其 Base64 订阅，需包含 1–512 个有效节点；VLESS 支持 TCP、WS、gRPC 和 TLS/Reality；不支持其他原始链接或 YAML 别名") from None
 
 
 class Runtime:
@@ -280,7 +362,7 @@ class Runtime:
     def add(self, name: str, url: str, content: str, interval: int):
         source = subscription_url(url) if url else ""
         if bool(source) == bool(content.strip()):
-            raise SubscriptionError("请填写订阅链接或导入 YAML 配置，二选一")
+            raise SubscriptionError("请填写订阅链接或导入节点配置，二选一")
         payload = fetch_subscription(source) if source else content.encode()
         with self.lock:
             if len(self.state["profiles"]) >= 50:

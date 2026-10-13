@@ -8,4 +8,4 @@ Bundle the unmodified, checksum-pinned Mihomo core with a small FastAPI manager 
 
 Use a private `/data` bind mount for the profile manifest, node caches and signing keys. Only empty examples are published. Both Compose applications join one named Docker bridge; the platform uses the stable alias `mihomo:7890`. The manager is reverse-proxied through a host loopback port; the native controller is never published.
 
-Imported routing, controller, listeners, TUN and DNS settings are intentionally ignored. This first release supports Clash/Mihomo YAML with inline nodes; provider-only configurations and raw URI/Base64 conversion are outside its contract. This avoids a separate conversion service and preserves a bounded import boundary.
+Imported routing, controller, listeners, TUN and DNS settings are intentionally ignored. The initial release supported Clash/Mihomo YAML with inline nodes; [ADR 0002](0002-vless-subscriptions.md) extends that boundary to bounded VLESS URI/Base64 import. Provider-only configurations remain outside the contract. Conversion stays local without a separate service.

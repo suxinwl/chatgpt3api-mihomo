@@ -32,7 +32,7 @@ curl -fsS http://127.0.0.1:48800/health
 
 `.env` 的 `PUBLIC_ORIGIN` 必须与浏览器地址完全一致，且不包含末尾 `/` 或子路径。使用根路径域名访问。此模板 `COOKIE_SECURE=true`，登录需要 HTTPS。若在隔离环境直接用 HTTP 测试，临时把编排的 `COOKIE_SECURE` 改成 `false`；公开 HTTPS 部署保持 `true`。
 
-用 `.env` 中的用户名和密码登录。添加订阅时选择“订阅链接”或“导入 YAML”。订阅列表仅显示来源主机名，不返回完整私密链接；编辑时链接留空保留原地址。导入配置的节点变更通过添加新配置后切换完成。
+用 `.env` 中的用户名和密码登录。添加订阅时选择“订阅链接”或“导入配置”。链接响应支持 Clash/Mihomo YAML/JSON 或 VLESS Base64 订阅；导入配置支持文件、原始 VLESS 链接和 Base64 文本。格式限制见 [功能说明](../../README.md)。订阅列表仅显示来源主机名，不返回完整私密链接；编辑时链接留空保留原地址。导入配置的节点变更通过添加新配置后切换完成。
 
 ## 3. 连接独立平台容器
 
@@ -51,7 +51,7 @@ docker compose up -d
 
 1. 备份平台业务数据、配置、现有 Compose 和服务器私有节点 YAML；保留原平台 runtime 卷。节点备份只放在服务器私有目录。
 2. 在旧平台编排目录执行 `docker compose stop mihomo`、`docker compose rm -f mihomo`，释放同名 `chatgpt3api-mihomo` 容器；平台服务可以继续运行。
-3. 启动新的独立 Mihomo 编排，配置宝塔后台域名并登录，通过“导入 YAML”导入服务器原有节点配置。旧配置不复制到公开源码、镜像构建目录或 Git。
+3. 启动新的独立 Mihomo 编排，配置宝塔后台域名并登录，通过“导入配置”导入服务器原有节点配置。旧配置不复制到公开源码、镜像构建目录或 Git。
 4. 在旧平台编排中移除原 `mihomo` 服务，并给平台添加 `external: true`、名称 `chatgpt3api-egress` 的网络，或使用提供的独立平台模板；保留原平台所有环境值与数据挂载。
 5. 在平台目录执行 `docker compose up -d chatgpt3api`，随后确认 `socks5h://mihomo:7890` 检测成功，实际生图和历史图片正常。
 

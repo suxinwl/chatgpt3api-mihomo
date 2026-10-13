@@ -65,10 +65,17 @@ jobs:
           PY
           curl -fsS -b /tmp/cookies -H 'X-Manager-Request: 1' -H 'Content-Type: application/json' \
             --data-binary @/tmp/profile.json http://127.0.0.1:48800/api/profiles
+          python - <<'PY' > /tmp/vless-profile.json
+          import base64,json
+          uri='vless://11111111-1111-4111-8111-111111111111@198.51.100.20:443?type=tcp&security=reality&flow=xtls-rprx-vision&fp=chrome&sni=example.com&pbk='+base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip('=')+'&sid=0123456789abcdef#CI%20VLESS'
+          print(json.dumps({'name': 'CI Base64', 'content': base64.b64encode(uri.encode()).decode()}))
+          PY
+          curl -fsS -b /tmp/cookies -H 'X-Manager-Request: 1' -H 'Content-Type: application/json' \
+            --data-binary @/tmp/vless-profile.json http://127.0.0.1:48800/api/profiles
           docker restart mihomo-smoke
           for i in $(seq 1 40); do curl -fsS http://127.0.0.1:48800/health >/dev/null && break || sleep 1; done
           curl -fsS -b /tmp/cookies http://127.0.0.1:48800/api/overview | python -c \
-            'import json,sys; d=json.load(sys.stdin); assert d["core_running"] and d["profiles"][0]["name"]=="CI fixture" and d["profiles"][0]["active"]'
+            'import json,sys; d=json.load(sys.stdin); assert d["core_running"] and len(d["profiles"])==2 and d["profiles"][0]["name"]=="CI fixture" and d["profiles"][0]["active"] and d["profiles"][1]["name"]=="CI Base64" and d["profiles"][1]["count"]==1 and not d["profiles"][1]["active"]'
           curl -fsS http://127.0.0.1:48800/ | grep -q 'Mihomo'
           docker stop mihomo-smoke
   publish:

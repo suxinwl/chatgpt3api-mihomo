@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 1.0.1 — 2026-10-13
+
+- [新增] 支持原始 VLESS 链接及标准/URL-safe Base64 订阅，包括 Reality、TCP Vision、WS 与 gRPC。
+- [优化] 导入表单接受文本订阅文件，并为 VLESS 的缺失、重复和保留名称生成唯一名称。
+
 ## 1.0.0 — 2026-10-13
 
 - [新增] 独立 Mihomo 镜像与两套 Compose，通过共享 Docker 网络连接平台。

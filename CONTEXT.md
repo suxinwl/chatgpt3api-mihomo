@@ -15,6 +15,6 @@ This repository is an independent proxy service. It does not own or migrate the 
 
 The profile manifest is the recovery authority. Startup rebuilds the active configuration from the committed manifest and node cache. A configuration candidate is validated by the native core, applied, then committed atomically; failures trigger compensation to the last committed configuration. Download work runs outside the commit lock, with a revision check before committing.
 
-The service imports only the `proxies` array. External subscriptions cannot choose listener ports, control credentials, DNS, rules or TUN. Native control calls use a private loopback listener; the manager returns a filtered public projection and never returns full subscription URLs or raw proxy credentials.
+Runtime's `parse_nodes` owns format normalization: YAML/JSON inline `proxies`, raw VLESS links and Base64 VLESS subscriptions become the same node list and private YAML cache. The service imports only nodes. External subscriptions cannot choose listener ports, control credentials, DNS, rules or TUN. Native control calls use a private loopback listener; the manager returns a filtered public projection and never returns full subscription URLs or raw proxy credentials.
 
 See [accepted decision](docs/adr/0001-independent-manager.md) and [current map](docs/maps/runtime.md).
