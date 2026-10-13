@@ -76,6 +76,29 @@ jobs:
           for i in $(seq 1 40); do curl -fsS http://127.0.0.1:48800/health >/dev/null && break || sleep 1; done
           curl -fsS -b /tmp/cookies http://127.0.0.1:48800/api/overview | python -c \
             'import json,sys; d=json.load(sys.stdin); assert d["core_running"] and len(d["profiles"])==2 and d["profiles"][0]["name"]=="CI fixture" and d["profiles"][0]["active"] and d["profiles"][1]["name"]=="CI Base64" and d["profiles"][1]["count"]==1 and not d["profiles"][1]["active"]'
+          python - <<'PY'
+          import http.cookiejar,json,urllib.request
+          jar=http.cookiejar.MozillaCookieJar('/tmp/cookies')
+          jar.load(ignore_discard=True,ignore_expires=True)
+          client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+          def call(path,payload=None):
+              request=urllib.request.Request('http://127.0.0.1:48800/api'+path,
+                  data=None if payload is None else json.dumps(payload).encode(),
+                  headers={'Content-Type':'application/json','X-Manager-Request':'1'})
+              with client.open(request,timeout=20) as response:
+                  return json.load(response)
+          before=call('/overview')
+          inactive=next(p for p in before['profiles'] if not p['active'])
+          path='/profiles/'+inactive['id']+'/nodes'
+          view=call(path)
+          assert len(view['nodes'])==1 and view['nodes'][0]['name']=='CI VLESS'
+          assert set(view['nodes'][0])=={'name','type','delay','status','label'}
+          result=call(path+'/delay',{'name':'CI VLESS','revision':view['revision']})
+          assert result['node']['status']=='unavailable' and result['node']['delay']==0
+          after=call('/overview')
+          assert after['active']==before['active'] and after['selected']==before['selected']
+          assert {n['name'] for n in after['nodes']}=={'Auto','CI node'}
+          PY
           curl -fsS http://127.0.0.1:48800/ | grep -q 'Mihomo'
           docker stop mihomo-smoke
   publish:

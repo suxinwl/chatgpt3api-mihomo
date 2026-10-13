@@ -8,7 +8,9 @@ import logging
 import os
 import re
 import secrets
+import socket
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -168,6 +170,10 @@ class Runtime:
         self.stop_event = threading.Event()
         self.process = None
         self.thread = None
+        self.probe_slots = threading.BoundedSemaphore(2)
+        self.probe_lock = threading.Lock()
+        self.probe_processes = set()
+        self.probe_results = {}
         self.data.mkdir(parents=True, exist_ok=True)
         os.chmod(self.data, 0o700)
         (self.data / "profiles").mkdir(exist_ok=True)
@@ -270,6 +276,8 @@ class Runtime:
 
     def _prune_cache(self):
         live = {p["cache"] for p in self.state["profiles"]}
+        revisions = {(p["id"], self._revision(p)) for p in self.state["profiles"]}
+        self.probe_results = {key: value for key, value in self.probe_results.items() if key[:2] in revisions}
         for path in (self.data / "profiles").glob("*.yaml"):
             if path.name not in live and re.fullmatch(r"[0-9a-f]{32}-[0-9a-f]{16}\.yaml", path.name):
                 try:
@@ -311,6 +319,10 @@ class Runtime:
 
     def close(self):
         self.stop_event.set()
+        with self.probe_lock:
+            for process in self.probe_processes:
+                if process.poll() is None:
+                    process.terminate()
         if self.thread:
             self.thread.join(timeout=30)
         with self.lock:
@@ -449,7 +461,7 @@ class Runtime:
         with self.lock:
             profiles = [{"id": p["id"], "name": p["name"], "source": urlsplit(p["url"]).hostname or "本地导入",
                          "remote": bool(p["url"]), "interval": p["interval"], "count": p["count"],
-                         "updated": p["updated"], "error": p.get("error", ""), "active": p["id"] == self.state["active"],
+                         "updated": p["updated"], "revision": self._revision(p), "error": p.get("error", ""), "active": p["id"] == self.state["active"],
                          "actions": {"activate": p["id"] != self.state["active"], "refresh": bool(p["url"]),
                                      "delete": p["id"] != self.state["active"]}}
                         for p in self.state["profiles"]]
@@ -488,3 +500,110 @@ class Runtime:
         result = self._core("GET", "/proxies/" + quote(name, safe="") + "/delay",
                             params={"timeout": 5000, "url": TEST_URL})
         return int(result["delay"])
+
+    @staticmethod
+    def _revision(profile: dict) -> str:
+        return hashlib.sha256(profile["cache"].encode()).hexdigest()[:24]
+
+    def _node_projection(self, profile_id: str, revision: str, node: dict) -> dict:
+        delay = self.probe_results.get((profile_id, revision, node["name"]))
+        status = "untested" if delay is None else "available" if delay > 0 else "unavailable"
+        label = "未测速" if delay is None else f"{delay} ms" if delay > 0 else "不可用 / 超时"
+        return {"name": node["name"], "type": node["type"], "delay": delay, "status": status, "label": label}
+
+    def profile_nodes(self, profile_id: str) -> dict:
+        with self.lock:
+            profile = self._find(self.state, profile_id)
+            revision = self._revision(profile)
+            nodes = parse_nodes(self._cache(profile).read_bytes())
+            return {"id": profile_id, "revision": revision,
+                    "nodes": [self._node_projection(profile_id, revision, node) for node in nodes]}
+
+    def profile_delay(self, profile_id: str, name: str, revision: str) -> dict:
+        with self.lock:
+            profile = self._find(self.state, profile_id)
+            if self._revision(profile) != revision:
+                raise SubscriptionError("订阅节点已更新，请重新查看节点后测速")
+            nodes = parse_nodes(self._cache(profile).read_bytes())
+            node = next((node for node in nodes if node["name"] == name), None)
+            if node is None:
+                raise SubscriptionError("该节点不在此订阅中，请重新查看节点")
+        delay = self._probe(nodes, name)
+        with self.lock:
+            profile = self._find(self.state, profile_id)
+            if self._revision(profile) != revision:
+                raise SubscriptionError("订阅节点已更新，本次测速结果已丢弃，请重新查看节点")
+            self.probe_results[(profile_id, revision, name)] = delay
+            return {"id": profile_id, "revision": revision,
+                    "node": self._node_projection(profile_id, revision, node)}
+
+    def _probe(self, nodes: list[dict], name: str) -> int:
+        # Never reload the live core or share its data directory for inspection.
+        if not self.probe_slots.acquire(blocking=False):
+            raise SubscriptionError("已有两个节点正在测速，请稍后重试")
+        process = None
+        try:
+            with tempfile.TemporaryDirectory(prefix="mihomo-probe-") as directory:
+                os.chmod(directory, 0o700)
+                with socket.socket() as listener:
+                    listener.bind(("127.0.0.1", 0))
+                    port = listener.getsockname()[1]
+                secret = secrets.token_hex(32)
+                configuration = {"port": 0, "socks-port": 0, "mixed-port": 0,
+                                 "redir-port": 0, "tproxy-port": 0, "allow-lan": False,
+                                 "external-controller": f"127.0.0.1:{port}", "secret": secret,
+                                 "mode": "rule", "log-level": "silent", "ipv6": False,
+                                 "dns": {"enable": False}, "tun": {"enable": False},
+                                 "profile": {"store-selected": False}, "proxies": nodes,
+                                 "proxy-groups": [], "rules": ["MATCH,REJECT"]}
+                path = Path(directory) / "config.yaml"
+                atomic_write(path, yaml.safe_dump(configuration, allow_unicode=True).encode())
+                with self.probe_lock:
+                    if self.stop_event.is_set():
+                        raise SubscriptionError("服务正在停止，请稍后重试")
+                    process = subprocess.Popen([self.binary, "-d", directory, "-f", str(path)],
+                                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    self.probe_processes.add(process)
+                try:
+                    with httpx.Client(base_url=f"http://127.0.0.1:{port}", trust_env=False,
+                                      headers={"Authorization": "Bearer " + secret}) as client:
+                        deadline = time.monotonic() + 6
+                        while time.monotonic() < deadline and not self.stop_event.is_set():
+                            if process.poll() is not None:
+                                break
+                            try:
+                                ready = client.get("/version", timeout=0.4)
+                                if ready.status_code == 200 and ready.json().get("version"):
+                                    break
+                            except (httpx.HTTPError, ValueError):
+                                pass
+                            self.stop_event.wait(0.1)
+                        else:
+                            raise SubscriptionError("测速内核启动超时，请稍后重试")
+                        if process.poll() is not None or self.stop_event.is_set():
+                            raise SubscriptionError("测速内核不可用，请稍后重试")
+                        response = client.get("/proxies/" + quote(name, safe="") + "/delay",
+                                              params={"timeout": 5000, "url": TEST_URL}, timeout=8)
+                        if response.status_code in {503, 504}:
+                            return 0
+                        response.raise_for_status()
+                        delay = response.json()["delay"]
+                        if not isinstance(delay, int) or isinstance(delay, bool) or delay < 0:
+                            raise ValueError
+                        return delay
+                finally:
+                    if process.poll() is None:
+                        process.terminate()
+                    try:
+                        process.wait(timeout=2)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=2)
+                    with self.probe_lock:
+                        self.probe_processes.discard(process)
+        except SubscriptionError:
+            raise
+        except Exception:
+            raise SubscriptionError("测速服务暂不可用，请稍后重试") from None
+        finally:
+            self.probe_slots.release()

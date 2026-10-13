@@ -42,6 +42,10 @@ class NodeInput(BaseModel):
     name: str = Field(min_length=1, max_length=160)
 
 
+class ProfileNodeInput(NodeInput):
+    revision: str = Field(pattern=r"^[0-9a-f]{24}$")
+
+
 def create_app(runtime: Runtime | None = None) -> FastAPI:
     username = os.getenv("MIHOMO_ADMIN_USERNAME", "admin")
     password_file = os.getenv("MIHOMO_ADMIN_PASSWORD_FILE")
@@ -191,6 +195,14 @@ def create_app(runtime: Runtime | None = None) -> FastAPI:
     def select(payload: NodeInput):
         runtime.select(payload.name)
         return {"ok": True, "message": "出口节点已切换"}
+
+    @app.get("/api/profiles/{profile_id}/nodes", dependencies=[Depends(authenticate)])
+    def profile_nodes(profile_id: str):
+        return runtime.profile_nodes(profile_id)
+
+    @app.post("/api/profiles/{profile_id}/nodes/delay", dependencies=[Depends(authenticate)])
+    def profile_delay(profile_id: str, payload: ProfileNodeInput):
+        return runtime.profile_delay(profile_id, payload.name, payload.revision)
 
     @app.post("/api/nodes/delay", dependencies=[Depends(authenticate)])
     def delay(payload: NodeInput):

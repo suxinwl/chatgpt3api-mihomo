@@ -16,6 +16,20 @@ const editing = ref(null),
   testing = ref({});
 let timer, previousFocus;
 const modal = ref(null);
+const profileViews = ref({});
+const profileWork = new Map();
+function stopProfile(id) {
+  if (profileViews.value[id]?.running) profileViews.value[id].stopped = true;
+  profileWork.get(id)?.abort();
+}
+function clearProfiles() {
+  for (const controller of profileWork.values()) controller.abort();
+  profileWork.clear();
+  profileViews.value = {};
+}
+watch(logged, (value) => {
+  if (!value) clearProfiles();
+});
 watch(dialog, async (visible) => {
   if (visible) {
     previousFocus = document.activeElement;
@@ -52,12 +66,13 @@ function trapFocus(event) {
   }
 }
 
-async function api(path, method = "GET", payload) {
+async function api(path, method = "GET", payload, signal) {
   const response = await fetch("/api" + path, {
     method,
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-Manager-Request": "1" },
     body: payload === undefined ? undefined : JSON.stringify(payload),
+    signal,
   });
   const body = await response.json().catch(() => null);
   if (response.status === 401) logged.value = false;
@@ -98,6 +113,123 @@ async function refresh() {
   const data = checkedOverview(await api("/overview"));
   overview.value = data;
   logged.value = true;
+  for (const [id, view] of Object.entries(profileViews.value)) {
+    const profile = data.profiles.find((p) => p.id === id);
+    if (!profile || (view.data && view.data.revision !== profile.revision)) {
+      stopProfile(id);
+      delete profileViews.value[id];
+      if (profile && view.open) void loadProfile(profile);
+    }
+  }
+}
+
+function checkedProfile(value, id) {
+  if (
+    !value ||
+    value.id !== id ||
+    !/^[0-9a-f]{24}$/.test(value.revision) ||
+    !Array.isArray(value.nodes) ||
+    value.nodes.length > 512 ||
+    !value.nodes.every(
+      (node) =>
+        node &&
+        typeof node.name === "string" &&
+        typeof node.type === "string" &&
+        typeof node.label === "string" &&
+        ["untested", "available", "unavailable"].includes(node.status) &&
+        (node.delay === null ||
+          (Number.isInteger(node.delay) && node.delay >= 0)),
+    )
+  )
+    throw new Error("订阅节点数据不完整，请重新查看节点");
+  return value;
+}
+async function loadProfile(profile) {
+  const previous = profileViews.value[profile.id];
+  stopProfile(profile.id);
+  profileViews.value[profile.id] = {
+    open: true,
+    loading: true,
+    running: false,
+    stopped: false,
+    current: "",
+    completed: 0,
+    total: 0,
+    error: "",
+    data: previous?.data || null,
+  };
+  const view = profileViews.value[profile.id];
+  const controller = new AbortController();
+  profileWork.set(profile.id, controller);
+  try {
+    const data = checkedProfile(
+      await api(
+        "/profiles/" + profile.id + "/nodes",
+        "GET",
+        undefined,
+        controller.signal,
+      ),
+      profile.id,
+    );
+    if (!controller.signal.aborted && profileViews.value[profile.id] === view)
+      view.data = data;
+  } catch (e) {
+    if (!controller.signal.aborted) view.error = e.message;
+  } finally {
+    if (profileWork.get(profile.id) === controller)
+      profileWork.delete(profile.id);
+    view.loading = false;
+  }
+}
+function toggleProfile(profile) {
+  const view = profileViews.value[profile.id];
+  if (view?.open) {
+    view.open = false;
+    stopProfile(profile.id);
+  } else void loadProfile(profile);
+}
+async function testProfile(profile, nodes) {
+  const view = profileViews.value[profile.id];
+  if (!view?.data || view.running || view.loading) return;
+  const revision = view.data.revision;
+  const controller = new AbortController();
+  profileWork.set(profile.id, controller);
+  view.running = true;
+  view.stopped = false;
+  view.error = "";
+  view.completed = 0;
+  view.total = nodes.length;
+  try {
+    for (const node of nodes) {
+      if (controller.signal.aborted || !logged.value) break;
+      view.current = node.name;
+      const result = await api(
+        "/profiles/" + profile.id + "/nodes/delay",
+        "POST",
+        { name: node.name, revision },
+        controller.signal,
+      );
+      const checked = checkedProfile(
+        { ...result, nodes: [result.node] },
+        profile.id,
+      );
+      if (checked.revision !== revision || result.node.name !== node.name)
+        throw new Error("订阅节点已更新，请重新查看节点");
+      if (controller.signal.aborted || profileViews.value[profile.id] !== view)
+        break;
+      view.data.nodes = view.data.nodes.map((item) =>
+        item.name === node.name ? result.node : item,
+      );
+      view.completed++;
+    }
+  } catch (e) {
+    if (!controller.signal.aborted) view.error = e.message;
+  } finally {
+    view.current = "";
+    view.running = false;
+    if (profileWork.get(profile.id) === controller)
+      profileWork.delete(profile.id);
+  }
 }
 async function action(callback, message) {
   if (busy.value) return;
@@ -228,7 +360,10 @@ onMounted(async () => {
     }
   }, 30000);
 });
-onUnmounted(() => clearInterval(timer));
+onUnmounted(() => {
+  clearInterval(timer);
+  clearProfiles();
+});
 </script>
 
 <template>
@@ -315,54 +450,163 @@ onUnmounted(() => clearInterval(timer));
         <div
           v-for="profile in overview?.profiles"
           :key="profile.id"
-          class="profile"
+          class="profile-entry"
         >
-          <div class="profile-info">
-            <div class="profile-title">
-              <h3>{{ profile.name }}</h3>
-              <span v-if="profile.active" class="tag">使用中</span>
+          <div class="profile">
+            <div class="profile-info">
+              <div class="profile-title">
+                <h3>{{ profile.name }}</h3>
+                <span v-if="profile.active" class="tag">使用中</span>
+              </div>
+              <p>
+                {{ profile.source }} · {{ profile.count }} 个节点 ·
+                {{
+                  profile.interval ? profile.interval + " 小时更新" : "手动更新"
+                }}
+              </p>
+              <p class="muted">最近更新 {{ timeLabel(profile.updated) }}</p>
+              <p v-if="profile.error" class="inline-error">
+                {{ profile.error }}
+              </p>
             </div>
-            <p>
-              {{ profile.source }} · {{ profile.count }} 个节点 ·
-              {{
-                profile.interval ? profile.interval + " 小时更新" : "手动更新"
-              }}
+            <div class="actions">
+              <button
+                :aria-expanded="!!profileViews[profile.id]?.open"
+                :aria-controls="'profile-nodes-' + profile.id"
+                @click="toggleProfile(profile)"
+              >
+                {{ profileViews[profile.id]?.open ? "收起节点" : "查看节点" }}
+              </button>
+              <button
+                :disabled="busy || !profile.actions.activate"
+                @click="
+                  action(
+                    () => api('/profiles/' + profile.id + '/activate', 'POST'),
+                    '订阅已切换',
+                  );
+                  delays = {};
+                "
+              >
+                {{ profile.active ? "已启用" : "切换" }}</button
+              ><button
+                v-if="profile.actions.refresh"
+                :disabled="busy"
+                @click="
+                  action(
+                    () => api('/profiles/' + profile.id + '/refresh', 'POST'),
+                    '订阅已更新',
+                  )
+                "
+              >
+                更新</button
+              ><button :disabled="busy" @click="open(profile)">编辑</button
+              ><button
+                class="danger"
+                :disabled="busy || !profile.actions.delete"
+                @click="remove(profile)"
+              >
+                删除
+              </button>
+            </div>
+          </div>
+          <section
+            v-if="profileViews[profile.id]?.open"
+            :id="'profile-nodes-' + profile.id"
+            class="profile-nodes"
+            :aria-label="profile.name + '的节点'"
+          >
+            <div class="profile-node-heading">
+              <p class="muted">此订阅的节点 · 连通性延迟（ms）</p>
+              <div class="actions">
+                <span
+                  v-if="profileViews[profile.id].total"
+                  class="muted"
+                  role="status"
+                >
+                  {{
+                    profileViews[profile.id].running
+                      ? "测速中"
+                      : profileViews[profile.id].stopped
+                        ? "已停止"
+                        : "已测"
+                  }}
+                  {{ profileViews[profile.id].completed }} /
+                  {{ profileViews[profile.id].total }}
+                </span>
+                <button
+                  v-if="profileViews[profile.id].running"
+                  @click="stopProfile(profile.id)"
+                >
+                  停止测速
+                </button>
+                <button
+                  v-else
+                  :disabled="
+                    profileViews[profile.id].loading ||
+                    !profileViews[profile.id].data?.nodes.length
+                  "
+                  @click="
+                    testProfile(profile, [
+                      ...profileViews[profile.id].data.nodes,
+                    ])
+                  "
+                >
+                  全部测速
+                </button>
+                <button
+                  :disabled="
+                    profileViews[profile.id].loading ||
+                    profileViews[profile.id].running
+                  "
+                  @click="loadProfile(profile)"
+                >
+                  重新查看
+                </button>
+              </div>
+            </div>
+            <p
+              v-if="profileViews[profile.id].loading"
+              class="muted"
+              role="status"
+            >
+              正在读取节点…
             </p>
-            <p class="muted">最近更新 {{ timeLabel(profile.updated) }}</p>
-            <p v-if="profile.error" class="inline-error">{{ profile.error }}</p>
-          </div>
-          <div class="actions">
-            <button
-              :disabled="busy || !profile.actions.activate"
-              @click="
-                action(
-                  () => api('/profiles/' + profile.id + '/activate', 'POST'),
-                  '订阅已切换',
-                );
-                delays = {};
-              "
+            <p
+              v-if="profileViews[profile.id].error"
+              class="inline-error"
+              role="alert"
             >
-              {{ profile.active ? "已启用" : "切换" }}</button
-            ><button
-              v-if="profile.actions.refresh"
-              :disabled="busy"
-              @click="
-                action(
-                  () => api('/profiles/' + profile.id + '/refresh', 'POST'),
-                  '订阅已更新',
-                )
-              "
-            >
-              更新</button
-            ><button :disabled="busy" @click="open(profile)">编辑</button
-            ><button
-              class="danger"
-              :disabled="busy || !profile.actions.delete"
-              @click="remove(profile)"
-            >
-              删除
-            </button>
-          </div>
+              {{ profileViews[profile.id].error }}
+            </p>
+            <ul class="profile-node-list">
+              <li
+                v-for="node in profileViews[profile.id].data?.nodes || []"
+                :key="node.name"
+              >
+                <div class="profile-node-name">
+                  <h3>{{ node.name }}</h3>
+                  <span class="muted">{{ node.type }}</span>
+                </div>
+                <div class="profile-node-result">
+                  <span :class="['latency', node.status]">{{
+                    profileViews[profile.id].current === node.name
+                      ? "测速中…"
+                      : node.label
+                  }}</span>
+                  <button
+                    :disabled="
+                      profileViews[profile.id].running ||
+                      profileViews[profile.id].loading
+                    "
+                    :aria-label="'测速 ' + node.name"
+                    @click="testProfile(profile, [node])"
+                  >
+                    测速
+                  </button>
+                </div>
+              </li>
+            </ul>
+          </section>
         </div>
       </section>
       <section class="panel">

@@ -5,10 +5,12 @@ Status: current
 - [Domain ownership](../CONTEXT.md)
 - [Accepted architecture](adr/0001-independent-manager.md)
 - [VLESS URI and Base64 import boundary](adr/0002-vless-subscriptions.md)
+- [Separate subscription inspection and probes](adr/0003-profile-node-inspection.md)
 - [Runtime and HTTP map](maps/runtime.md)
 - [Deployment, BaoTa, migration and recovery](runbooks/deployment.md)
 - [Requirement and remaining acceptance](requirements/0001-subscription-manager.md)
 - [VLESS subscription requirement and verification](requirements/0002-vless-subscriptions.md)
+- [Per-subscription node inspection and testing](requirements/0003-profile-node-inspection.md)
 
 Local development uses Python 3.13 and Node 22. Install `requirements.txt` from official PyPI, then run `npm ci` and `npm run build` in `web`. Start `uvicorn manager.app:create_app --factory --host 127.0.0.1 --port 8080 --no-access-log` with a downloaded official Mihomo binary in `MIHOMO_BINARY`, a private `DATA_DIR`, and a strong `MIHOMO_ADMIN_PASSWORD`. For local HTTP only, set `COOKIE_SECURE=false`.
 

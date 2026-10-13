@@ -4,13 +4,14 @@ Status: current
 
 独立部署的 Mihomo 代理服务，带中文订阅管理后台。与 `chatgpt3api` 分成两套 Docker Compose；后台通过宝塔反代独立域名访问。
 
-镜像：`ghcr.io/suxinwl/chatgpt3api-mihomo:latest`。固定版本使用 `:v1.0.1`，支持 Linux amd64 / arm64，内核固定为 Mihomo v1.19.32。
+镜像：`ghcr.io/suxinwl/chatgpt3api-mihomo:latest`。固定版本使用 `:v1.0.2`，支持 Linux amd64 / arm64，内核固定为 Mihomo v1.19.32。
 
 支持：
 
 - 添加多个 Clash/Mihomo YAML 或 VLESS Base64 订阅，改名、手动更新、按小时自动更新、切换和删除。
 - 从文件或文本导入 YAML/JSON 的 `proxies` 节点、原始 VLESS 链接或 Base64 订阅。VLESS 链接支持 TCP、WS、gRPC 与 TLS/Reality、TCP Vision；YAML/JSON 中的 TUIC、Hysteria2、SOCKS5 等协议由内核校验。
 - 选择节点、单节点测速、全部测速，以及 Auto 自动选择出口。
+- 每个订阅可独立查看已保存的节点、逐个或全部测速并停止；未启用订阅也可测试，结果留在对应订阅中，当前出口和“节点选择”保持不变。
 - 后台密码登录；订阅、当前选择和管理会话签名密钥持久化到 `/data`。
 - 下载或校验失败时保留已保存的配置；切换失败时恢复原配置。
 
