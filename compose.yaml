@@ -1,0 +1,29 @@
+services:
+  mihomo:
+    image: ghcr.io/suxinwl/chatgpt3api-mihomo:latest
+    container_name: chatgpt3api-mihomo
+    restart: unless-stopped
+    stop_grace_period: 60s
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MIHOMO_ADMIN_USERNAME: "${MIHOMO_ADMIN_USERNAME:-admin}"
+      MIHOMO_ADMIN_PASSWORD: "${MIHOMO_ADMIN_PASSWORD:?请在 .env 中设置至少 12 位后台登录密码}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:?请设置后台的 HTTPS 访问域名}"
+      COOKIE_SECURE: "true"
+      TZ: Asia/Shanghai
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:48800:8080"
+    networks:
+      egress:
+        aliases: [mihomo]
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+networks:
+  egress:
+    name: chatgpt3api-egress
+    driver: bridge

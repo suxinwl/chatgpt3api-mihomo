@@ -1,0 +1,14 @@
+.env
+.env.*
+!.env.example
+data/
+runtime/
+*.log
+*.bak
+__pycache__/
+.venv/
+.pytest_cache/
+tests/
+web/node_modules/
+web/dist/
+build/

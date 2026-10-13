@@ -1,0 +1,27 @@
+services:
+  chatgpt3api:
+    image: ghcr.io/suxinwl/chatgpt3api:latest
+    container_name: chatgpt3api
+    restart: unless-stopped
+    environment:
+      CHATGPT2API_AUTH_KEY: "${CHATGPT2API_AUTH_KEY:?请填写平台原有管理密钥}"
+      DATABASE_URL: sqlite:////app/data/chatgpt2api.db
+      CHATGPT2API_BASE_URL: "${CHATGPT2API_BASE_URL:?请填写平台原有公网域名}"
+      CHATGPT2API_THREAD_TOKENS: "120"
+      TZ: Asia/Shanghai
+    volumes:
+      - chatgpt3api-runtime:/app
+      - /www/server/panel/data/compose/chatgpt3api/data:/app/data:rw
+      - /www/server/panel/data/compose/chatgpt3api/config.json:/app/config.json:rw
+    ports:
+      - "127.0.0.1:48764:80"
+    networks: [egress]
+
+volumes:
+  chatgpt3api-runtime:
+    name: chatgpt3api-runtime
+
+networks:
+  egress:
+    external: true
+    name: chatgpt3api-egress

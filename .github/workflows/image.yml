@@ -1,0 +1,102 @@
+name: Build and publish
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: pip install --index-url https://pypi.org/simple -r requirements.txt
+      - run: python -m compileall -q manager build_core.py
+      - run: npm ci --registry=https://registry.npmjs.org && npm run build
+        working-directory: web
+      - name: Validate release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: test "$(cat VERSION)" = "${GITHUB_REF_NAME#v}"
+      - name: Validate both Compose files
+        env:
+          MIHOMO_ADMIN_PASSWORD: ci-only-placeholder-password
+          PUBLIC_ORIGIN: https://proxy.example.com
+          CHATGPT2API_AUTH_KEY: ci-only-placeholder-key
+          CHATGPT2API_BASE_URL: https://app.example.com
+        run: |
+          docker compose -f compose.yaml config --quiet
+          docker compose -f deploy/chatgpt3api.compose.yaml config --quiet
+      - uses: docker/setup-buildx-action@v3
+      - name: Build native smoke image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: chatgpt3api-mihomo:smoke
+          cache-from: type=gha,scope=smoke
+          cache-to: type=gha,mode=max,scope=smoke
+      - name: Verify startup, authentication and persistence
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d --name mihomo-smoke --cap-drop ALL --security-opt no-new-privileges \
+            -e MIHOMO_ADMIN_PASSWORD=ci-only-placeholder-password -e COOKIE_SECURE=false \
+            -p 127.0.0.1:48800:8080 -v smoke-data:/data chatgpt3api-mihomo:smoke
+          for i in $(seq 1 40); do curl -fsS http://127.0.0.1:48800/health >/dev/null && break || sleep 1; done
+          curl -fsS http://127.0.0.1:48800/health
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:48800/api/overview)" = 401
+          curl -fsS -c /tmp/cookies -H 'X-Manager-Request: 1' -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"ci-only-placeholder-password"}' http://127.0.0.1:48800/api/login
+          python - <<'PY' > /tmp/profile.json
+          import json
+          print(json.dumps({'name': 'CI fixture', 'content': 'proxies:\n  - name: CI node\n    type: socks5\n    server: 192.0.2.1\n    port: 1080\n'}))
+          PY
+          curl -fsS -b /tmp/cookies -H 'X-Manager-Request: 1' -H 'Content-Type: application/json' \
+            --data-binary @/tmp/profile.json http://127.0.0.1:48800/api/profiles
+          docker restart mihomo-smoke
+          for i in $(seq 1 40); do curl -fsS http://127.0.0.1:48800/health >/dev/null && break || sleep 1; done
+          curl -fsS -b /tmp/cookies http://127.0.0.1:48800/api/overview | python -c \
+            'import json,sys; d=json.load(sys.stdin); assert d["core_running"] and d["profiles"][0]["name"]=="CI fixture" and d["profiles"][0]["active"]'
+          curl -fsS http://127.0.0.1:48800/ | grep -q 'Mihomo'
+          docker stop mihomo-smoke
+  publish:
+    needs: verify
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ghcr.io/suxinwl/chatgpt3api-mihomo:latest
+            ghcr.io/suxinwl/chatgpt3api-mihomo:${{ github.ref_name }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            REVISION=${{ github.sha }}
+          cache-from: type=gha,scope=release
+          cache-to: type=gha,mode=max,scope=release

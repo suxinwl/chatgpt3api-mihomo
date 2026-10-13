@@ -1,0 +1,10 @@
+chatgpt3api-mihomo
+Copyright (C) 2026 suxinwl and contributors
+Licensed under GNU GPL version 3 or later.
+
+This image distributes the unmodified Mihomo core v1.19.32 (GPL-3.0).
+Mihomo copyright holders: MetaCubeX and Mihomo contributors.
+Corresponding core source: https://github.com/MetaCubeX/mihomo/tree/v1.19.32
+Official release artifacts and their SHA256 checksums are pinned in upstream.json.
+The manager source, Docker recipe and frontend dependency lock are in this repository.
+Frontend third-party dependency notices are distributed with their npm packages.
