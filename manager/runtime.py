@@ -603,7 +603,10 @@ class Runtime:
                         self.probe_processes.discard(process)
         except SubscriptionError:
             raise
-        except Exception:
+        except Exception as error:
+            # Categories/statuses diagnose control failures without exposing node data.
+            logger.warning("Profile probe failed (%s, HTTP %s)", type(error).__name__,
+                           error.response.status_code if isinstance(error, httpx.HTTPStatusError) else "n/a")
             raise SubscriptionError("测速服务暂不可用，请稍后重试") from None
         finally:
             self.probe_slots.release()
