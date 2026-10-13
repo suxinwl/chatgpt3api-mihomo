@@ -15,6 +15,6 @@ Ownership remains Runtime for parsing, immutable caches, validation, activation 
 | Malformed links, excess nodes, aliases and invalid refresh preserve configuration | Parser bounds and rollback regression |
 | YAML and frontend file/text workflows still work | Full runtime regression and desktop/mobile browser smoke |
 | Provided response is recognized without storing private payload in the repository | In-memory diagnosis verifies 32 nodes |
-| Published image imports the endpoint on the user's server | Pending production deployment and endpoint verification |
+| Published image imports the endpoint on the user's server | v1.0.1 deployment: 32 nodes imported and manually refreshed through the authenticated manager API; existing active profile and node retained |
 
-Automated verification is separate from user acceptance. See [accepted import boundary](../adr/0002-vless-subscriptions.md).
+Runtime regression passed 62 tests; desktop/mobile browser smoke, Docker release smoke and production login/assets/platform-proxy checks passed. User confirmation of the production interface remains pending. Automated verification is separate from user acceptance. See [accepted import boundary](../adr/0002-vless-subscriptions.md).
