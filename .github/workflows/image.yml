@@ -77,7 +77,7 @@ jobs:
           curl -fsS -b /tmp/cookies http://127.0.0.1:48800/api/overview | python -c \
             'import json,sys; d=json.load(sys.stdin); assert d["core_running"] and len(d["profiles"])==2 and d["profiles"][0]["name"]=="CI fixture" and d["profiles"][0]["active"] and d["profiles"][1]["name"]=="CI Base64" and d["profiles"][1]["count"]==1 and not d["profiles"][1]["active"]'
           python - <<'PY'
-          import http.cookiejar,json,urllib.request
+          import http.cookiejar,json,urllib.error,urllib.request
           jar=http.cookiejar.MozillaCookieJar('/tmp/cookies')
           jar.load(ignore_discard=True,ignore_expires=True)
           client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
@@ -85,8 +85,12 @@ jobs:
               request=urllib.request.Request('http://127.0.0.1:48800/api'+path,
                   data=None if payload is None else json.dumps(payload).encode(),
                   headers={'Content-Type':'application/json','X-Manager-Request':'1'})
-              with client.open(request,timeout=20) as response:
-                  return json.load(response)
+              try:
+                  with client.open(request,timeout=20) as response:
+                      return json.load(response)
+              except urllib.error.HTTPError as error:
+                  # The manager's safe error projection contains no fixture credentials.
+                  raise RuntimeError(error.read().decode()) from None
           before=call('/overview')
           inactive=next(p for p in before['profiles'] if not p['active'])
           path='/profiles/'+inactive['id']+'/nodes'
